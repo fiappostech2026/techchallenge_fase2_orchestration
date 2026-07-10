@@ -1,0 +1,101 @@
+services:
+  # ---------------------------------------------------------------
+  # RabbitMQ: o "correio" que entrega as mensagens (eventos) entre
+  # os microsserviços. Nenhum serviço fala diretamente com o outro,
+  # todos publicam e escutam mensagens aqui.
+  # ---------------------------------------------------------------
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: fcg-rabbitmq
+    ports:
+      - "5672:5672"    # porta usada pelos microsserviços para trocar mensagens
+      - "15672:15672"  # painel visual: http://localhost:15672
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------
+  # PaymentsAPI: consome OrderPlacedEvent, processa (simula) o
+  # pagamento e publica PaymentProcessedEvent.
+  # ---------------------------------------------------------------
+  payments-api:
+    build:
+      context: ${PAYMENTS_PATH:-../FCG.Payments}
+      dockerfile: Dockerfile
+    container_name: fcg-payments-api
+    environment:
+      RABBITMQ__HOST: rabbitmq
+      RABBITMQ__VIRTUALHOST: "/"
+      RABBITMQ__USERNAME: ${RABBITMQ_USER:-guest}
+      RABBITMQ__PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+    ports:
+      - "5010:8080"  # opcional: acesso direto ao healthcheck em /healthz
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    restart: on-failure
+
+  # ---------------------------------------------------------------
+  # NotificationsAPI: consome UserCreatedEvent e PaymentProcessedEvent,
+  # "envia" (loga no console) e-mails de boas-vindas e confirmação.
+  # ---------------------------------------------------------------
+  notifications-api:
+    build:
+      context: ${NOTIFICATIONS_PATH:-../FCG.Notifications}
+      dockerfile: Dockerfile
+    container_name: fcg-notifications-api
+    environment:
+      RABBITMQ__HOST: rabbitmq
+      RABBITMQ__VIRTUALHOST: "/"
+      RABBITMQ__USERNAME: ${RABBITMQ_USER:-guest}
+      RABBITMQ__PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+    ports:
+      - "5011:8080"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    restart: on-failure
+
+  # ---------------------------------------------------------------
+  # users-api e catalog-api: repositórios do time parceiro (fora do
+  # nosso escopo até agora). Assim que o Dockerfile de cada um
+  # estiver pronto, descomente o bloco correspondente e ajuste
+  # "context" para o caminho local do repositório deles (ou defina
+  # USERS_PATH / CATALOG_PATH no seu .env).
+  # ---------------------------------------------------------------
+  # users-api:
+  #   build:
+  #     context: ${USERS_PATH:-../users-api}
+  #     dockerfile: Dockerfile
+  #   container_name: fcg-users-api
+  #   environment:
+  #     RABBITMQ__HOST: rabbitmq
+  #     RABBITMQ__VIRTUALHOST: "/"
+  #     RABBITMQ__USERNAME: ${RABBITMQ_USER:-guest}
+  #     RABBITMQ__PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+  #   ports:
+  #     - "5001:8080"
+  #   depends_on:
+  #     rabbitmq:
+  #       condition: service_healthy
+  #
+  # catalog-api:
+  #   build:
+  #     context: ${CATALOG_PATH:-../catalog-api}
+  #     dockerfile: Dockerfile
+  #   container_name: fcg-catalog-api
+  #   environment:
+  #     RABBITMQ__HOST: rabbitmq
+  #     RABBITMQ__VIRTUALHOST: "/"
+  #     RABBITMQ__USERNAME: ${RABBITMQ_USER:-guest}
+  #     RABBITMQ__PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+  #   ports:
+  #     - "5002:8080"
+  #   depends_on:
+  #     rabbitmq:
+  #       condition: service_healthy
