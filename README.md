@@ -18,10 +18,13 @@ chamados de **microsserviços**, que conversam entre si trocando mensagens.
 
 | Microsserviço | O que faz | Repositório |
 |---|---|---|
-| **UsersAPI** | Cadastro e login de usuários | do time parceiro |
-| **CatalogAPI** | Catálogo de jogos e início da compra | do time parceiro |
-| **PaymentsAPI** | Processa (simula) o pagamento de uma compra | `FCG.Payments` |
-| **NotificationsAPI** | "Envia" (simula, escrevendo no console) e-mails de boas-vindas e confirmação de compra | `FCG.Notifications` |
+| **UsersAPI** | Cadastro e login de usuários; emite o token JWT usado pelos outros serviços | [`techchallenge_fase2_user`](../techchallenge_fase2_user) |
+| **CatalogAPI** | Catálogo de jogos, início da compra e biblioteca; valida o token JWT emitido pelo UsersAPI | [`FCG.Catalog`](../FCG.Catalog) |
+| **PaymentsAPI** | Processa (simula) o pagamento de uma compra | [`FCG.Payments`](../FCG.Payments) |
+| **NotificationsAPI** | "Envia" (simula, escrevendo no console) e-mails de boas-vindas e confirmação de compra | [`FCG.Notifications`](../FCG.Notifications) |
+
+UsersAPI e CatalogAPI também guardam seus próprios dados em banco (cada um com seu SQL Server
+isolado); PaymentsAPI e NotificationsAPI não têm banco — são *Worker Services* sem estado.
 
 Pense em cada microsserviço como um **funcionário especialista**: um só cuida de cadastro de
 gente, outro só cuida da lista de jogos, outro só processa pagamento, outro só manda e-mail.
@@ -79,7 +82,8 @@ funciona".
 comando. É como um "controle remoto" que liga a TV, o som e o videogame juntos, na ordem certa.
 
 Este repositório tem um arquivo chamado `docker-compose.yml` que descreve **quais containers
-subir** (RabbitMQ, PaymentsAPI, NotificationsAPI) e **como eles se conectam entre si**.
+subir** — RabbitMQ, UsersAPI (+ seu próprio SQL Server), CatalogAPI (+ seu próprio SQL Server),
+PaymentsAPI e NotificationsAPI — e **como eles se conectam entre si**.
 
 ### 3.2. Kubernetes (para rodar em um "cluster", simulando produção)
 
@@ -116,11 +120,11 @@ FCG.Orchestration/
 └── README.md                # este arquivo
 ```
 
-Os manifestos k8s de **cada microsserviço** (Deployment, Service, ConfigMap, Secret do
-PaymentsAPI e do NotificationsAPI) continuam morando dentro do próprio repositório de cada um,
-em uma pasta `/k8s` — isso é exigido pelo enunciado do desafio, para manter cada microsserviço
-dono do seu próprio deploy. Este repositório só centraliza o que é **compartilhado** (o
-RabbitMQ) e o que **liga tudo** (o docker-compose).
+Os manifestos k8s de **cada microsserviço** (Deployment, Service, ConfigMap, Secret — e, no caso
+do UsersAPI e do CatalogAPI, também o Deployment/Service do próprio SQL Server) continuam morando
+dentro do repositório de cada um, em uma pasta `/k8s` — isso é exigido pelo enunciado do desafio,
+para manter cada microsserviço dono do seu próprio deploy. Este repositório só centraliza o que é
+**compartilhado** (o RabbitMQ) e o que **liga tudo** (o docker-compose).
 
 ### Convenção de pastas esperada
 
@@ -130,20 +134,15 @@ repositórios do projeto dentro da mesma pasta pai**, um do lado do outro:
 
 ```
 minha-pasta-do-projeto/
-├── FCG.Orchestration/   ← você está aqui
+├── FCG.Orchestration/          ← você está aqui
 ├── FCG.Payments/
 ├── FCG.Notifications/
-├── users-api/            (repositório do time responsável por Usuários)
-└── catalog-api/          (repositório do time responsável por Catálogo)
+├── FCG.Catalog/
+└── techchallenge_fase2_user/   (repositório do UsersAPI)
 ```
 
 Se você clonou em nomes de pasta diferentes, não precisa renomear nada — só ajuste os caminhos
 no seu arquivo `.env` (veja passo 2 abaixo).
-
-> **Nota:** os microsserviços `users-api` e `catalog-api` são de responsabilidade do time
-> parceiro. Enquanto o Dockerfile deles não estiver pronto, o `docker-compose.yml` sobe apenas
-> RabbitMQ + PaymentsAPI + NotificationsAPI (os blocos dos outros dois já estão escritos no
-> arquivo, comentados, prontos para ativar assim que o código deles chegar).
 
 ---
 
@@ -152,8 +151,8 @@ no seu arquivo `.env` (veja passo 2 abaixo).
 ### Pré-requisitos
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) instalado e aberto.
-- Ter clonado este repositório e os repositórios `FCG.Payments` e `FCG.Notifications` na mesma
-  pasta pai (ver seção 4).
+- Ter clonado este repositório e os outros 3 na mesma pasta pai: `FCG.Payments`,
+  `FCG.Notifications`, `FCG.Catalog` e `techchallenge_fase2_user` (ver seção 4).
 
 ### Passo a passo
 
@@ -163,7 +162,9 @@ no seu arquivo `.env` (veja passo 2 abaixo).
    cp .env.example .env
    ```
 
-   (Os valores padrão já funcionam para rodar localmente, não precisa editar nada de início.)
+   (Os valores padrão já funcionam para rodar localmente, não precisa editar nada de início. Se
+   quiser usar uma chave JWT própria em vez do placeholder de desenvolvimento, defina
+   `JWT_SECRET_KEY` no seu `.env` — ver seção 7.)
 
 2. **Suba tudo com um comando**, de dentro desta pasta:
 
@@ -173,14 +174,22 @@ no seu arquivo `.env` (veja passo 2 abaixo).
 
    Isso vai:
    - baixar e iniciar o RabbitMQ (o "correio" entre os serviços);
-   - construir a imagem do PaymentsAPI e do NotificationsAPI a partir do código-fonte deles;
-   - iniciar os dois microsserviços já conectados ao RabbitMQ.
+   - subir um SQL Server dedicado para o UsersAPI e outro para o CatalogAPI (cada um com seu
+     próprio volume, dados não se misturam);
+   - construir a imagem de cada um dos 4 microsserviços a partir do código-fonte deles;
+   - iniciar os 4 microsserviços já conectados ao RabbitMQ e (UsersAPI/CatalogAPI) ao seu banco.
+
+   A primeira subida demora mais que as seguintes — o SQL Server leva um tempo para ficar pronto,
+   e os serviços que dependem dele (`depends_on: ... condition: service_healthy`) esperam esse
+   sinal antes de iniciar.
 
 3. **Verifique se está no ar:**
    - Painel do RabbitMQ: [http://localhost:15672](http://localhost:15672) (usuário/senha:
      `guest` / `guest`). Nele dá para ver as filas e mensagens passando em tempo real.
    - Healthcheck do PaymentsAPI: [http://localhost:5010/healthz](http://localhost:5010/healthz)
      (deve responder `Healthy`).
+   - Swagger do UsersAPI: [http://localhost:5001/swagger](http://localhost:5001/swagger).
+   - Swagger do CatalogAPI: [http://localhost:5002/swagger](http://localhost:5002/swagger).
 
 4. **Para derrubar tudo:**
 
@@ -188,13 +197,18 @@ no seu arquivo `.env` (veja passo 2 abaixo).
    docker-compose down
    ```
 
+   Os dados dos SQL Server ficam guardados nos volumes nomeados (`catalog-sqlserver-data`,
+   `users-sqlserver-data`) e sobrevivem a um `down` normal. Para apagar os dados também, use
+   `docker-compose down -v`.
+
 ### Erros comuns
 
 | Sintoma | Causa provável | Solução |
 |---|---|---|
-| `context path does not exist` | O caminho no `.env` não bate com onde você clonou o repositório | Ajuste `PAYMENTS_PATH` / `NOTIFICATIONS_PATH` no seu `.env` |
-| PaymentsAPI/NotificationsAPI reiniciando em loop | RabbitMQ ainda não terminou de subir | Espere alguns segundos — o `depends_on` já aguarda o RabbitMQ ficar saudável, mas a primeira subida pode demorar um pouco |
-| Porta já em uso (`port is already allocated`) | Outro programa já está usando a porta 5672, 15672, 5010 ou 5011 | Feche o outro programa ou troque a porta no `docker-compose.yml` |
+| `context path does not exist` | O caminho no `.env` não bate com onde você clonou o repositório | Ajuste `PAYMENTS_PATH` / `NOTIFICATIONS_PATH` / `CATALOG_PATH` / `USERS_PATH` no seu `.env` |
+| Algum serviço reiniciando em loop | RabbitMQ ou o SQL Server correspondente ainda não terminou de subir | Espere alguns segundos — o `depends_on` já aguarda a dependência ficar saudável, mas a primeira subida pode demorar um pouco (o SQL Server em especial) |
+| Porta já em uso (`port is already allocated`) | Outro programa já está usando a porta 5672, 15672, 5001, 5002, 5010, 5011, 1433 ou 1434 | Feche o outro programa ou troque a porta no `docker-compose.yml` |
+| `401 Unauthorized` chamando o CatalogAPI com um token do UsersAPI | `JWT_SECRET_KEY`/Issuer/Audience divergentes entre os dois serviços | No `docker-compose.yml` deste repositório os dois já vêm alinhados por padrão — se você sobrescreveu algum valor manualmente, confira se editou os dois lados igual |
 
 ---
 
@@ -217,11 +231,15 @@ no seu arquivo `.env` (veja passo 2 abaixo).
    kubectl apply -f k8s/rabbitmq/
    ```
 
-2. **Suba cada microsserviço**, a partir da pasta `k8s/` dentro do repositório de cada um:
+2. **Suba cada microsserviço**, a partir da pasta `k8s/` dentro do repositório de cada um. O
+   UsersAPI e o CatalogAPI têm SQL Server próprio nos seus manifestos — não precisam de nada
+   além do RabbitMQ como pré-requisito:
 
    ```bash
    kubectl apply -f ../FCG.Payments/k8s/
    kubectl apply -f ../FCG.Notifications/k8s/
+   kubectl apply -f ../techchallenge_fase2_user/k8s/
+   kubectl apply -f ../FCG.Catalog/k8s/
    ```
 
 3. **Confira se todos os Pods estão rodando:**
@@ -234,10 +252,19 @@ no seu arquivo `.env` (veja passo 2 abaixo).
 
    ```
    NAME                                 READY   STATUS    RESTARTS   AGE
-   rabbitmq-xxxxxxxxxx-xxxxx           1/1     Running   0          1m
-   payments-api-xxxxxxxxxx-xxxxx       1/1     Running   0          45s
-   notifications-api-xxxxxxxxxx-xxxxx  1/1     Running   0          45s
+   rabbitmq-xxxxxxxxxx-xxxxx           1/1     Running   0          2m
+   payments-api-xxxxxxxxxx-xxxxx       1/1     Running   0          90s
+   notifications-api-xxxxxxxxxx-xxxxx  1/1     Running   0          90s
+   users-api-xxxxxxxxxx-xxxxx          1/1     Running   0          60s
+   users-sqlserver-xxxxxxxxxx-xxxxx    1/1     Running   0          60s
+   catalog-api-xxxxxxxxxx-xxxxx        1/1     Running   0          60s
+   catalog-sqlserver-xxxxxxxxxx-xxxxx  1/1     Running   0          60s
    ```
+
+   > As imagens (`fcg-users-api:latest`, `fcg-catalog-api:latest` etc.) usam
+   > `imagePullPolicy: IfNotPresent` — precisam já estar carregadas no cluster (ex:
+   > `minikube image load fcg-users-api:latest`) antes do `apply`, senão o Pod fica em
+   > `ImagePullBackOff`.
 
 4. **Para derrubar tudo:**
 
@@ -245,6 +272,8 @@ no seu arquivo `.env` (veja passo 2 abaixo).
    kubectl delete -f k8s/rabbitmq/
    kubectl delete -f ../FCG.Payments/k8s/
    kubectl delete -f ../FCG.Notifications/k8s/
+   kubectl delete -f ../techchallenge_fase2_user/k8s/
+   kubectl delete -f ../FCG.Catalog/k8s/
    ```
 
 ### Como os serviços se acham dentro do cluster
@@ -261,23 +290,41 @@ site normal resolve `google.com` para um IP.
 
 | Variável | Usada por | Descrição | Padrão |
 |---|---|---|---|
-| `RABBITMQ_USER` | RabbitMQ + os dois microsserviços | Usuário de acesso ao RabbitMQ | `guest` |
-| `RABBITMQ_PASSWORD` | RabbitMQ + os dois microsserviços | Senha de acesso ao RabbitMQ | `guest` |
+| `RABBITMQ_USER` | RabbitMQ + os 4 microsserviços | Usuário de acesso ao RabbitMQ | `guest` |
+| `RABBITMQ_PASSWORD` | RabbitMQ + os 4 microsserviços | Senha de acesso ao RabbitMQ | `guest` |
+| `MSSQL_SA_PASSWORD` | SQL Server do CatalogAPI + o próprio CatalogAPI | Senha do usuário `sa` do banco do Catálogo | `Catalog@Strong!Pass1` |
+| `USERS_MSSQL_SA_PASSWORD` | SQL Server do UsersAPI + o próprio UsersAPI | Senha do usuário `sa` do banco de Usuários | `Users@Strong!Pass1` |
+| `JWT_SECRET_KEY` | UsersAPI (emite) + CatalogAPI (valida) | Chave de assinatura do token JWT — precisa ser **igual** nos dois | `tech-challenge-fase-2-fcg-chave-secreta-jwt-256bits-minimo` (placeholder de dev) |
 | `PAYMENTS_PATH` | `docker-compose.yml` | Caminho local do repositório `FCG.Payments` | `../FCG.Payments` |
 | `NOTIFICATIONS_PATH` | `docker-compose.yml` | Caminho local do repositório `FCG.Notifications` | `../FCG.Notifications` |
+| `CATALOG_PATH` | `docker-compose.yml` | Caminho local do repositório `FCG.Catalog` | `../FCG.Catalog` |
+| `USERS_PATH` | `docker-compose.yml` | Caminho local do repositório `techchallenge_fase2_user` | `../techchallenge_fase2_user` |
 
-> As credenciais `guest`/`guest` são padrão de **ambiente de desenvolvimento apenas**. Nunca
-> use essas credenciais em um ambiente real.
+> As credenciais `guest`/`guest` e as senhas de SQL Server acima são padrão de **ambiente de
+> desenvolvimento apenas**. Nunca use essas credenciais em um ambiente real. `JWT_SECRET_KEY`
+> em particular está versionada em texto claro no `docker-compose.yml` (como valor padrão) e nos
+> `appsettings.json`/`k8s/secret.yaml` de cada serviço — ver "Limitações conhecidas" abaixo.
 
 ---
 
 ## 8. Limitações conhecidas (transparência)
 
-- Os blocos de `users-api` e `catalog-api` no `docker-compose.yml` estão comentados porque os
-  Dockerfiles desses serviços (time parceiro) ainda não foram integrados a este repositório.
 - O `NotificationsAPI` ainda não expõe um endpoint de healthcheck HTTP (o `PaymentsAPI` expõe em
   `/healthz`, o `NotificationsAPI` não tem `AddHealthChecks()`/`MapHealthChecks()` configurado
   no código atual) — por isso não há checagem de saúde HTTP para ele no compose.
 - Não há retry automático nem fila de mensagens mortas (*dead-letter queue*) configurada no
   RabbitMQ ainda — se uma mensagem falhar na validação, ela é apenas descartada com um log de
   aviso.
+- **`JWT_SECRET_KEY` está versionada em texto claro** como valor padrão neste `docker-compose.yml`
+  e replicada nos `appsettings.json`/`k8s/secret.yaml` do UsersAPI e do CatalogAPI. Aceitável para
+  demonstração/FIAP; num deploy real viria de um secret manager e nunca seria commitada.
+- **`Issuer`/`Audience` do JWT usam valores diferentes por ambiente**: aqui no `docker-compose`,
+  ambos os serviços usam `FCG.Usuario.Api`/`FCG.Usuario.Client`; rodando via Kubernetes ou
+  `dotnet run` direto (appsettings locais de cada repo), o valor é `FCG.Catalog.Api`/
+  `FCG.Catalog.Client`. Cada ambiente é internamente consistente (o token de um não vale no
+  outro, mas isso já era esperado — são execuções separadas), mas é uma pegadinha de manutenção
+  se alguém copiar um valor de um ambiente pro outro sem perceber a diferença.
+- O SQL Server do UsersAPI e do CatalogAPI, aqui no `docker-compose`, usa volumes nomeados
+  (dados sobrevivem a um `docker-compose down` normal); já nos manifestos Kubernetes de cada
+  repositório, o volume é `emptyDir` — os dados são perdidos se o Pod do banco reiniciar. Cada
+  ambiente decide isso de forma independente, é decisão de cada repositório.
