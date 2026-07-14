@@ -1,15 +1,10 @@
 services:
-  # ---------------------------------------------------------------
-  # RabbitMQ: o "correio" que entrega as mensagens (eventos) entre
-  # os microsserviços. Nenhum serviço fala diretamente com o outro,
-  # todos publicam e escutam mensagens aqui.
-  # ---------------------------------------------------------------
   rabbitmq:
     image: rabbitmq:3-management
     container_name: fcg-rabbitmq
     ports:
-      - "5672:5672"    # porta usada pelos microsserviços para trocar mensagens
-      - "15672:15672"  # painel visual: http://localhost:15672
+      - "5672:5672"
+      - "15672:15672"  # http://localhost:15672
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
@@ -19,10 +14,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # ---------------------------------------------------------------
-  # PaymentsAPI: consome OrderPlacedEvent, processa (simula) o
-  # pagamento e publica PaymentProcessedEvent.
-  # ---------------------------------------------------------------
   payments-api:
     build:
       context: ${PAYMENTS_PATH:-../FCG.Payments}
@@ -34,16 +25,12 @@ services:
       RABBITMQ__USERNAME: ${RABBITMQ_USER:-guest}
       RABBITMQ__PASSWORD: ${RABBITMQ_PASSWORD:-guest}
     ports:
-      - "5010:8080"  # opcional: acesso direto ao healthcheck em /healthz
+      - "5010:8080"
     depends_on:
       rabbitmq:
         condition: service_healthy
     restart: on-failure
 
-  # ---------------------------------------------------------------
-  # NotificationsAPI: consome UserCreatedEvent e PaymentProcessedEvent,
-  # "envia" (loga no console) e-mails de boas-vindas e confirmação.
-  # ---------------------------------------------------------------
   notifications-api:
     build:
       context: ${NOTIFICATIONS_PATH:-../FCG.Notifications}
@@ -61,41 +48,84 @@ services:
         condition: service_healthy
     restart: on-failure
 
-  # ---------------------------------------------------------------
-  # users-api e catalog-api: repositórios do time parceiro (fora do
-  # nosso escopo até agora). Assim que o Dockerfile de cada um
-  # estiver pronto, descomente o bloco correspondente e ajuste
-  # "context" para o caminho local do repositório deles (ou defina
-  # USERS_PATH / CATALOG_PATH no seu .env).
-  # ---------------------------------------------------------------
-  # users-api:
-  #   build:
-  #     context: ${USERS_PATH:-../users-api}
-  #     dockerfile: Dockerfile
-  #   container_name: fcg-users-api
-  #   environment:
-  #     RABBITMQ__HOST: rabbitmq
-  #     RABBITMQ__VIRTUALHOST: "/"
-  #     RABBITMQ__USERNAME: ${RABBITMQ_USER:-guest}
-  #     RABBITMQ__PASSWORD: ${RABBITMQ_PASSWORD:-guest}
-  #   ports:
-  #     - "5001:8080"
-  #   depends_on:
-  #     rabbitmq:
-  #       condition: service_healthy
-  #
-  # catalog-api:
-  #   build:
-  #     context: ${CATALOG_PATH:-../catalog-api}
-  #     dockerfile: Dockerfile
-  #   container_name: fcg-catalog-api
-  #   environment:
-  #     RABBITMQ__HOST: rabbitmq
-  #     RABBITMQ__VIRTUALHOST: "/"
-  #     RABBITMQ__USERNAME: ${RABBITMQ_USER:-guest}
-  #     RABBITMQ__PASSWORD: ${RABBITMQ_PASSWORD:-guest}
-  #   ports:
-  #     - "5002:8080"
-  #   depends_on:
-  #     rabbitmq:
-  #       condition: service_healthy
+  users-api:
+    build:
+      context: ${USERS_PATH:-../techchallenge_fase2_user}
+      dockerfile: Dockerfile
+    container_name: fcg-users-api
+    environment:
+      RABBITMQ__HOST: rabbitmq
+      RABBITMQ__VIRTUALHOST: "/"
+      RABBITMQ__USERNAME: ${RABBITMQ_USER:-guest}
+      RABBITMQ__PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      ConnectionStrings__DefaultConnection: "Server=users-sqlserver,1433;Database=users;User Id=sa;Password=${USERS_MSSQL_SA_PASSWORD:-Users@Strong!Pass1};TrustServerCertificate=True"
+      Jwt__SecretKey: ${JWT_SECRET_KEY:-tech-challenge-fase-2-fcg-chave-secreta-jwt-256bits-minimo}
+      Jwt__Issuer: FCG.Usuario.Api
+      Jwt__Audience: FCG.Usuario.Client
+    ports:
+      - "5001:8080"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      users-sqlserver:
+        condition: service_healthy
+    restart: on-failure
+
+  users-sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: fcg-users-sqlserver
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${USERS_MSSQL_SA_PASSWORD:-Users@Strong!Pass1}
+    ports:
+      - "1434:1433"
+    volumes:
+      - users-sqlserver-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q \"SELECT 1\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  catalog-api:
+    build:
+      context: ${CATALOG_PATH:-../FCG.Catalog}
+      dockerfile: Dockerfile
+    container_name: fcg-catalog-api
+    environment:
+      RABBITMQ__HOST: rabbitmq
+      RABBITMQ__VIRTUALHOST: "/"
+      RABBITMQ__USERNAME: ${RABBITMQ_USER:-guest}
+      RABBITMQ__PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      ConnectionStrings__DefaultConnection: "Server=catalog-sqlserver,1433;Database=catalog;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Catalog@Strong!Pass1};TrustServerCertificate=True"
+      JwtSettings__SecretKey: ${JWT_SECRET_KEY:-tech-challenge-fase-2-fcg-chave-secreta-jwt-256bits-minimo}
+      JwtSettings__Issuer: FCG.Usuario.Api
+      JwtSettings__Audience: FCG.Usuario.Client
+    ports:
+      - "5002:8080"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      catalog-sqlserver:
+        condition: service_healthy
+    restart: on-failure
+
+  catalog-sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: fcg-catalog-sqlserver
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:-Catalog@Strong!Pass1}
+    ports:
+      - "1433:1433"
+    volumes:
+      - catalog-sqlserver-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q \"SELECT 1\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  catalog-sqlserver-data:
+  users-sqlserver-data:
