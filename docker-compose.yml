@@ -20,29 +20,14 @@ services:
       dockerfile: Dockerfile
     container_name: fcg-payments-api
     environment:
-      RABBITMQ__HOST: rabbitmq
-      RABBITMQ__VIRTUALHOST: "/"
+      RABBITMQ__HOST: ${RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ__VIRTUALHOST: ${RABBITMQ_VIRTUALHOST:-/}
       RABBITMQ__USERNAME: ${RABBITMQ_USER:-guest}
       RABBITMQ__PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      RABBITMQ__PORT: ${RABBITMQ_PORT:-}
+      RABBITMQ__USESSL: ${RABBITMQ_USE_SSL:-false}
     ports:
       - "5010:8080"
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    restart: on-failure
-
-  notifications-api:
-    build:
-      context: ${NOTIFICATIONS_PATH:-../FCG.Notifications}
-      dockerfile: Dockerfile
-    container_name: fcg-notifications-api
-    environment:
-      RABBITMQ__HOST: rabbitmq
-      RABBITMQ__VIRTUALHOST: "/"
-      RABBITMQ__USERNAME: ${RABBITMQ_USER:-guest}
-      RABBITMQ__PASSWORD: ${RABBITMQ_PASSWORD:-guest}
-    ports:
-      - "5011:8080"
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -54,10 +39,12 @@ services:
       dockerfile: Dockerfile
     container_name: fcg-users-api
     environment:
-      RABBITMQ__HOST: rabbitmq
-      RABBITMQ__VIRTUALHOST: "/"
+      RABBITMQ__HOST: ${RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ__VIRTUALHOST: ${RABBITMQ_VIRTUALHOST:-/}
       RABBITMQ__USERNAME: ${RABBITMQ_USER:-guest}
       RABBITMQ__PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      RABBITMQ__PORT: ${RABBITMQ_PORT:-}
+      RABBITMQ__USESSL: ${RABBITMQ_USE_SSL:-false}
       ConnectionStrings__DefaultConnection: "Server=users-sqlserver,1433;Database=users;User Id=sa;Password=${USERS_MSSQL_SA_PASSWORD:-Users@Strong!Pass1};TrustServerCertificate=True"
       Jwt__SecretKey: ${JWT_SECRET_KEY:-tech-challenge-fase-2-fcg-chave-secreta-jwt-256bits-minimo}
       Jwt__Issuer: FCG.Usuario.Api
@@ -93,10 +80,12 @@ services:
       dockerfile: Dockerfile
     container_name: fcg-catalog-api
     environment:
-      RABBITMQ__HOST: rabbitmq
-      RABBITMQ__VIRTUALHOST: "/"
+      RABBITMQ__HOST: ${RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ__VIRTUALHOST: ${RABBITMQ_VIRTUALHOST:-/}
       RABBITMQ__USERNAME: ${RABBITMQ_USER:-guest}
       RABBITMQ__PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      RABBITMQ__PORT: ${RABBITMQ_PORT:-}
+      RABBITMQ__USESSL: ${RABBITMQ_USE_SSL:-false}
       ConnectionStrings__DefaultConnection: "Server=catalog-sqlserver,1433;Database=catalog;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Catalog@Strong!Pass1};TrustServerCertificate=True"
       JwtSettings__SecretKey: ${JWT_SECRET_KEY:-tech-challenge-fase-2-fcg-chave-secreta-jwt-256bits-minimo}
       JwtSettings__Issuer: FCG.Usuario.Api
