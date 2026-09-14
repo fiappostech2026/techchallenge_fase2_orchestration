@@ -18,6 +18,7 @@ chamados de **microsserviços**, que conversam entre si trocando mensagens.
 
 | Microsserviço | O que faz | Repositório |
 |---|---|---|
+| **API Gateway (Kong)** | Porta única de entrada: recebe as requisições externas, valida o token JWT e roteia para UsersAPI/CatalogAPI | [`k8s/kong`](./k8s/kong) (deste repositório) |
 | **UsersAPI** | Cadastro e login de usuários; emite o token JWT usado pelos outros serviços | [`techchallenge_fase2_user`](../techchallenge_fase2_user) |
 | **CatalogAPI** | Catálogo de jogos, início da compra e biblioteca; valida o token JWT emitido pelo UsersAPI | [`FCG.Catalog`](../FCG.Catalog) |
 | **PaymentsAPI** | Processa (simula) o pagamento de uma compra | [`FCG.Payments`](../FCG.Payments) |
@@ -123,15 +124,20 @@ FCG.Orchestration/
 │   │   ├── deployment.yaml  # pertence a nenhum microsserviço específico, por isso
 │   │   ├── service.yaml     # mora aqui e não dentro de FCG.Payments/FCG.Notifications)
 │   │   └── secret.yaml
-│   └── monitoring/          # Prometheus + Grafana (Item 3 — Observabilidade, ver seção 9)
-│       ├── prometheus-configmap.yaml
-│       ├── prometheus-deployment.yaml
-│       ├── prometheus-service.yaml
-│       ├── grafana-datasource-configmap.yaml
-│       ├── grafana-dashboard-provider-configmap.yaml
-│       ├── grafana-dashboard-json-configmap.yaml
-│       ├── grafana-deployment.yaml
-│       └── grafana-service.yaml
+│   ├── monitoring/          # Prometheus + Grafana (Item 3 — Observabilidade, ver seção 9)
+│   │   ├── prometheus-configmap.yaml
+│   │   ├── prometheus-deployment.yaml
+│   │   ├── prometheus-service.yaml
+│   │   ├── grafana-datasource-configmap.yaml
+│   │   ├── grafana-dashboard-provider-configmap.yaml
+│   │   ├── grafana-dashboard-json-configmap.yaml
+│   │   ├── grafana-deployment.yaml
+│   │   └── grafana-service.yaml
+│   └── kong/                # API Gateway (porta única de entrada do sistema — item
+│       ├── kong-config-secret.yaml  # também não pertence a nenhum microsserviço,
+│       ├── deployment.yaml          # é a peça que fica na frente de todos eles)
+│       ├── service.yaml
+│       └── admin-service.yaml
 └── README.md                # este arquivo
 ```
 
@@ -195,6 +201,8 @@ no seu arquivo `.env` (veja passo 2 abaixo).
    - baixar e iniciar o RabbitMQ (o "correio" entre os serviços);
    - subir um SQL Server dedicado para o UsersAPI e outro para o CatalogAPI (cada um com seu
      próprio volume, dados não se misturam);
+   - subir um MongoDB (avaliações de jogos) e um Redis (cache da listagem de jogos), ambos
+     dedicados ao CatalogAPI — ver seção 8 do README do `techchallenge_fase2_catalog_service`;
    - construir a imagem de cada um dos 3 microsserviços (Payments, Users, Catalog) a partir do
      código-fonte deles;
    - iniciar os 3 microsserviços já conectados ao RabbitMQ e (UsersAPI/CatalogAPI) ao seu banco.
@@ -271,7 +279,14 @@ no seu arquivo `.env` (veja passo 2 abaixo).
    > `FCG.Notifications` não tem mais manifestos k8s — desde a Fase 3 ele roda como Azure
    > Function, fora do cluster (ver seção 9).
 
-3. **Confira se todos os Pods estão rodando:**
+3. **Suba o API Gateway (Kong) por último** — ele precisa que `users-api` e `catalog-api` já
+   existam como Service no cluster, porque o `kong.yml` referencia os dois pelo nome DNS interno:
+
+   ```bash
+   kubectl apply -f k8s/kong/
+   ```
+
+4. **Confira se todos os Pods estão rodando:**
 
    ```bash
    kubectl get pods
@@ -289,6 +304,7 @@ no seu arquivo `.env` (veja passo 2 abaixo).
    users-sqlserver-xxxxxxxxxx-xxxxx    1/1     Running   0          60s
    catalog-api-xxxxxxxxxx-xxxxx        1/1     Running   0          60s
    catalog-sqlserver-xxxxxxxxxx-xxxxx  1/1     Running   0          60s
+   kong-xxxxxxxxxx-xxxxx               1/1     Running   0          30s
    ```
 
    > As imagens (`fcg-users-api:latest`, `fcg-catalog-api:latest` etc.) usam
@@ -296,14 +312,15 @@ no seu arquivo `.env` (veja passo 2 abaixo).
    > `minikube image load fcg-users-api:latest`) antes do `apply`, senão o Pod fica em
    > `ImagePullBackOff`.
 
-4. **Acesse o Grafana e o Prometheus** (Item 3 — Observabilidade, ver seção 9):
+5. **Acesse o Grafana e o Prometheus** (Item 3 — Observabilidade, ver seção 9):
    - Grafana: `http://<ip-do-cluster>:30030` (login anônimo habilitado, dashboard "FCG" já
      provisionado). No Minikube, descubra o IP com `minikube ip`.
    - Prometheus: `http://<ip-do-cluster>:30090`.
 
-5. **Para derrubar tudo:**
+6. **Para derrubar tudo:**
 
    ```bash
+   kubectl delete -f k8s/kong/
    kubectl delete -f k8s/rabbitmq/
    kubectl delete -f k8s/monitoring/
    kubectl delete -f ../FCG.Payments/k8s/
@@ -318,6 +335,59 @@ Dentro do Kubernetes, cada microsserviço enxerga o RabbitMQ pelo **nome do Serv
 é exatamente o `metadata.name` definido em `k8s/rabbitmq/service.yaml`. O Kubernetes resolve
 esse nome automaticamente para o endereço certo do container, de forma parecida com como um
 site normal resolve `google.com` para um IP.
+
+### Testando o API Gateway (Kong)
+
+O Kong é a única porta de entrada — depois dele no ar, pare de chamar `users-api`/`catalog-api`
+diretamente e use sempre a porta do `kong-proxy`.
+
+1. **Descubra a porta que o Kubernetes abriu** (o `NodePort` é escolhido automaticamente):
+
+   ```bash
+   kubectl get service kong-proxy
+   # ex.: kong-proxy   NodePort   10.x.x.x   <none>   8000:31234/TCP
+   ```
+
+   Com Kind/Minikube/Docker Desktop, essa porta (`31234` no exemplo) fica acessível em
+   `http://localhost:31234` — ajuste os comandos abaixo para a porta que aparecer na sua máquina.
+
+2. **Faça login via Gateway** (rota pública, sem token):
+
+   ```bash
+   curl -X POST http://localhost:31234/api/Usuario/login \
+     -H "Content-Type: application/json" \
+     -d '{"email":"seu@email.com","senha":"suaSenha"}'
+   ```
+
+   A resposta traz o token JWT.
+
+3. **Chame uma rota protegida sem token** (deve dar `401`, o plugin `jwt` do Kong bloqueia antes
+   de a requisição sequer chegar no CatalogAPI):
+
+   ```bash
+   curl -i -X POST http://localhost:31234/api/v1/games \
+     -H "Content-Type: application/json" \
+     -d '{"nome":"Jogo Teste"}'
+   ```
+
+4. **Repita com o token do passo 2** (deve passar e chegar no CatalogAPI):
+
+   ```bash
+   curl -X POST http://localhost:31234/api/v1/games \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer <token do passo 2>" \
+     -d '{"nome":"Jogo Teste"}'
+   ```
+
+5. **Listagem de jogos continua pública, sem token** (rota `catalog-games-read`):
+
+   ```bash
+   curl http://localhost:31234/api/v1/games
+   ```
+
+> A Admin API do Kong (porta 8001) não é exposta fora do cluster de propósito — pra inspecionar
+> o estado do Kong (`/status`, `/routes`, `/services`), use `kubectl port-forward svc/kong-admin
+> 8001:8001` e acesse `http://localhost:8001` só localmente.
 
 ---
 

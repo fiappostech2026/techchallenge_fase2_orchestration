@@ -90,6 +90,9 @@ services:
       JwtSettings__SecretKey: ${JWT_SECRET_KEY:-tech-challenge-fase-2-fcg-chave-secreta-jwt-256bits-minimo}
       JwtSettings__Issuer: FCG.Usuario.Api
       JwtSettings__Audience: FCG.Usuario.Client
+      Mongo__ConnectionString: "mongodb://catalog-mongo:27017"
+      Mongo__Database: "catalog_reviews"
+      Redis__ConnectionString: "catalog-redis:6379"
     ports:
       - "5002:8080"
     depends_on:
@@ -97,7 +100,35 @@ services:
         condition: service_healthy
       catalog-sqlserver:
         condition: service_healthy
+      catalog-mongo:
+        condition: service_healthy
+      catalog-redis:
+        condition: service_healthy
     restart: on-failure
+
+  catalog-mongo:
+    image: mongo:7
+    container_name: fcg-catalog-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - catalog-mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  catalog-redis:
+    image: redis:7-alpine
+    container_name: fcg-catalog-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   catalog-sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-latest
@@ -118,3 +149,4 @@ services:
 volumes:
   catalog-sqlserver-data:
   users-sqlserver-data:
+  catalog-mongo-data:

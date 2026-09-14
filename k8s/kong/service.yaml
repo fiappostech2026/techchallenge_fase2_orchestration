@@ -1,0 +1,14 @@
+# Porta de entrada única do sistema: NodePort para ficar acessível de fora
+# do cluster sem precisar de um Ingress controller à parte.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kong-proxy
+spec:
+  selector:
+    app: kong
+  ports:
+    - name: proxy
+      port: 8000
+      targetPort: proxy
+  type: NodePort

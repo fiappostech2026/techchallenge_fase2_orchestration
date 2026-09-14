@@ -1,0 +1,16 @@
+# Admin API do Kong: ClusterIP só (não exposta fora do cluster).
+# É aqui que rotas/plugins seriam gerenciados em runtime — em modo DB-less
+# ela fica só como somente-leitura para introspecção (kubectl port-forward
+# svc/kong-admin 8001:8001, depois curl localhost:8001/status).
+apiVersion: v1
+kind: Service
+metadata:
+  name: kong-admin
+spec:
+  selector:
+    app: kong
+  ports:
+    - name: admin
+      port: 8001
+      targetPort: admin
+  type: ClusterIP
