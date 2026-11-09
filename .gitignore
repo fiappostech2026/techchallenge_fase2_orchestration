@@ -1,1 +1,4 @@
 .env
+
+# Secrets reais nunca vão para o Git
+k8s/rabbitmq/secret.yaml

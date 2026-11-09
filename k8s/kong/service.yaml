@@ -1,5 +1,8 @@
-# Porta de entrada única do sistema: NodePort para ficar acessível de fora
-# do cluster sem precisar de um Ingress controller à parte.
+# Porta de entrada única do sistema. type: LoadBalancer faz o AKS criar um
+# IP público no Azure Load Balancer (veja com `kubectl get svc kong-proxy`,
+# coluna EXTERNAL-IP). Todas as chamadas externas entram por aqui:
+#   http://<EXTERNAL-IP>/api/v1/games/search?q=zelda
+# No Docker Desktop o mesmo Service fica acessível em http://localhost.
 apiVersion: v1
 kind: Service
 metadata:
@@ -9,6 +12,6 @@ spec:
     app: kong
   ports:
     - name: proxy
-      port: 8000
+      port: 80
       targetPort: proxy
-  type: NodePort
+  type: LoadBalancer

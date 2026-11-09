@@ -1,3 +1,5 @@
+# Acesso: kubectl port-forward svc/grafana 3000:3000  ->  http://localhost:3000
+# ClusterIP de propósito: não expor o Grafana (login padrão) com IP público no AKS.
 apiVersion: v1
 kind: Service
 metadata:
@@ -8,5 +10,4 @@ spec:
   ports:
     - port: 3000
       targetPort: 3000
-      nodePort: 30030
-  type: NodePort
+  type: ClusterIP
