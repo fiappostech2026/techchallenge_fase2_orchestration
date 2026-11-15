@@ -126,9 +126,16 @@ FCG.Orchestration/
 ├── docker-compose.yml     # sobe tudo na sua máquina com um comando
 ├── .env.example            # modelo de configuração (copie para .env e preencha)
 ├── .gitignore
-├── azure-pipelines.yml     # pipeline da "plataforma" no Azure DevOps (Fase 4, ver seção 9)
+├── .github/
+│   └── workflows/
+│       └── deploy-platform.yml  # pipeline da "plataforma" no GitHub Actions (Fase 4, ver seção 9)
+├── infra/                  # infraestrutura como código do Azure (Fase 4, ver seção 9.4)
+│   ├── main.bicep          # descreve o ACR e o cluster AKS
+│   └── .env.example        # modelo das entradas dos scripts (copie para infra/.env e preencha)
 ├── scripts/
-│   └── deploy-platform.sh  # sobe Kong + Prometheus/Grafana no cluster atual (local ou AKS)
+│   ├── deploy-platform.sh     # sobe Kong + Prometheus/Grafana no cluster atual (local ou AKS)
+│   ├── provision-azure.sh     # cria o resource group, o ACR e o AKS a partir do main.bicep
+│   └── setup-github-oidc.sh   # liga o GitHub Actions ao Azure (OIDC) e grava Secrets/Variables
 ├── k8s/
 │   ├── rabbitmq/            # manifestos do RabbitMQ — usado SÓ no cluster local; em
 │   │   ├── deployment.yaml  # produção os serviços usam o CloudAMQP (ver seção 8)
@@ -155,14 +162,14 @@ Os manifestos k8s de **cada microsserviço** (Deployment, Service, ConfigMap, mo
 e, no caso do UsersAPI e do CatalogAPI, também os bancos de dados de cada um) continuam morando
 dentro do repositório de cada um, em uma pasta `/k8s` — isso é exigido pelo enunciado do desafio,
 para manter cada microsserviço dono do seu próprio deploy. Cada repositório também tem a **sua
-própria pipeline** (`azure-pipelines.yml`). Este repositório só centraliza o que é
+própria pipeline** (`.github/workflows/ci-cd.yml`). Este repositório só centraliza o que é
 **compartilhado** (Kong, monitoramento e o RabbitMQ local) e o que **liga tudo** (o
 docker-compose).
 
 > **Nenhuma senha ou chave fica no Git.** Onde antes havia arquivos `secret.yaml` com valores
 > reais, agora há apenas modelos `secret.yaml.example` com espaços para preencher. Os valores
-> reais ficam no seu `.env` (local, ignorado pelo Git) ou nos *Variable Groups* do Azure DevOps
-> (produção — ver seção 9).
+> reais ficam no seu `.env` (local, ignorado pelo Git) ou nos *Secrets* do GitHub de cada
+> repositório (produção — ver seção 9).
 
 ### Convenção de pastas esperada
 
@@ -513,8 +520,8 @@ como **obrigatória** não têm valor padrão: sem elas o `docker-compose` se re
 
 > O arquivo `.env` **nunca vai para o Git** (está no `.gitignore`). As credenciais `guest`/`guest`
 > sugeridas no `.env.example` servem **apenas para desenvolvimento local** — nunca use em um
-> ambiente real. Em produção (AKS), os valores equivalentes vêm dos *Variable Groups* do Azure
-> DevOps (ver seção 9).
+> ambiente real. Em produção (AKS), os valores equivalentes vêm dos *Secrets* do GitHub
+> (ver seção 9).
 
 ---
 
@@ -594,7 +601,7 @@ com **entrega automática** a cada mudança de código e **nenhuma senha escrita
                     gerenciado, usado por       (busca de jogos         (NotificationsAPI,
                     todos os serviços)          do CatalogAPI)          ver seção 8)
 
-  Imagens Docker: Azure Container Registry (ACR)  |  Senhas: Azure DevOps Variable Groups
+  Imagens Docker: Azure Container Registry (ACR)  |  Senhas: GitHub Secrets
 ```
 
 As peças, uma a uma:
@@ -607,7 +614,8 @@ As peças, uma a uma:
 | **Elastic Cloud** | Elasticsearch gerenciado (o motor de busca, sem precisar cuidar de servidor) | Atende a busca do CatalogAPI (`GET /api/v1/games/search?q=`), que tolera erros de digitação e ordena por relevância |
 | **CloudAMQP** | RabbitMQ gerenciado (o "correio" entre serviços) | Usado em produção por todos os serviços e pela Azure Function — o RabbitMQ de `k8s/rabbitmq/` fica só para uso local |
 | **MongoDB e Redis** | Banco NoSQL e cache em memória | Já existiam no CatalogAPI (avaliações e cache da listagem); no AKS rodam como Pods |
-| **Variable Groups** (Azure DevOps) | Um "cofre" de senhas da ferramenta de pipelines, que podem ser ligados ao **Azure Key Vault** (o cofre oficial do Azure) | Guardam todas as senhas e chaves; as pipelines as entregam ao cluster na hora do deploy |
+| **GitHub Secrets e Variables** | Um "cofre" de senhas (Secrets) e de configurações comuns (Variables) que cada repositório do GitHub tem | Guardam todas as senhas e chaves; as pipelines as entregam ao cluster na hora do deploy |
+| **OIDC** (login sem senha) | O GitHub "apresenta um crachá" temporário a cada execução e o Azure confere de quem é, em vez de usar uma senha guardada | As pipelines entram no Azure só com o crachá do environment `production` do próprio repositório |
 
 Alguns cuidados de **disponibilidade** foram adicionados nos manifestos de cada serviço:
 UsersAPI e CatalogAPI rodam com **2 cópias** (réplicas) cada, então uma pode cair ou ser
@@ -622,27 +630,34 @@ Nenhuma credencial fica mais no Git:
 - a chave JWT do Kong saiu de `k8s/kong/kong-config-secret.yaml` (apagado) e virou o modelo
   `k8s/kong/kong.yml.tpl`, preenchido só na hora do deploy pelo `scripts/deploy-platform.sh`;
 - os `secret.yaml` de cada repositório viraram modelos `secret.yaml.example`; em produção, os
-  Secrets são **criados pelas pipelines** a cada deploy, com valores lidos destes Variable Groups
-  do Azure DevOps:
+  Secrets são **criados pelas pipelines** a cada deploy, com valores lidos dos **GitHub
+  Secrets** de cada repositório (Settings > Secrets and variables > Actions). Cada repositório
+  guarda só o que usa:
 
-  | Variable Group | O que guarda | Usado por |
+  | GitHub Secret | O que guarda | Repositórios |
   |---|---|---|
-  | `fcg-shared-secrets` | `jwt-secret-key` e os dados de acesso ao CloudAMQP (`rabbitmq-host`, `rabbitmq-vhost`, `rabbitmq-port`, `rabbitmq-use-ssl`, `rabbitmq-user`, `rabbitmq-password`) | Todas as pipelines |
-  | `fcg-users-secrets` | `users-sql-password` | Pipeline do UsersAPI |
-  | `fcg-catalog-secrets` | `catalog-sql-password`, `elasticsearch-url`, `elasticsearch-api-key` | Pipeline do CatalogAPI |
+  | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` | Identificação do login OIDC no Azure (não são senhas, mas ficam guardados junto) | Todos os 4 |
+  | `JWT_SECRET_KEY` | Chave de assinatura do token JWT (a mesma em todos) | UsersAPI, CatalogAPI e este (Kong) |
+  | `RABBITMQ_HOST`, `RABBITMQ_VHOST`, `RABBITMQ_PORT`, `RABBITMQ_USE_SSL`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD` | Dados de acesso ao CloudAMQP | UsersAPI, CatalogAPI e PaymentsAPI |
+  | `USERS_SQL_PASSWORD` | Senha do SQL Server do UsersAPI | UsersAPI |
+  | `CATALOG_SQL_PASSWORD`, `ELASTICSEARCH_URL`, `ELASTICSEARCH_API_KEY` | Senha do SQL Server do CatalogAPI e acesso ao Elastic Cloud | CatalogAPI |
+
+  Além disso, cada repositório tem as **Variables** (configurações sem segredo) `ACR_NAME`,
+  `AKS_RESOURCE_GROUP` e `AKS_CLUSTER_NAME`. Ninguém precisa cadastrar nada disso na mão: o
+  `scripts/setup-github-oidc.sh` faz tudo (seção 9.4).
 
 - o `docker-compose.yml` não tem mais senhas padrão — tudo vem do `.env` (seção 5).
 
-### 9.3. As pipelines (CI/CD no Azure DevOps)
+### 9.3. As pipelines (CI/CD no GitHub Actions)
 
 **CI/CD** (*Integração e Entrega Contínuas*) quer dizer: a cada mudança enviada para a branch
 `main`, um robô compila, testa e publica a nova versão sozinho, sem ninguém precisar rodar
-comandos na mão. Cada repositório tem a **sua própria pipeline**, no arquivo
-`azure-pipelines.yml`:
+comandos na mão. O robô aqui é o **GitHub Actions**, e cada repositório tem a **sua própria
+pipeline** (no GitHub chamada de *workflow*), dentro da pasta `.github/workflows/`:
 
 | Pipeline | Repositório | O que faz |
 |---|---|---|
-| **Plataforma** | este (`FCG.Orchestration`) | Roda quando mudam `k8s/kong/`, `k8s/monitoring/`, `scripts/` ou a própria pipeline. Conecta no AKS (`az aks get-credentials`) e executa o `scripts/deploy-platform.sh` com a chave JWT do Variable Group `fcg-shared-secrets` |
+| **Plataforma** (`deploy-platform.yml`) | este (`FCG.Orchestration`) | Roda quando mudam `k8s/kong/`, `k8s/monitoring/`, `scripts/deploy-platform.sh` ou a própria pipeline. Conecta no AKS (`az aks get-credentials`) e executa o `scripts/deploy-platform.sh` com a chave JWT do GitHub Secret `JWT_SECRET_KEY` |
 | **UsersAPI** | `techchallenge_fase2_user` | Build & Test → Imagem → Deploy (abaixo) |
 | **CatalogAPI** | `FCG.Catalog` | Build & Test → Imagem → Deploy (abaixo) |
 | **PaymentsAPI** | `FCG.Payments` | Build & Test → Imagem → Deploy (abaixo) |
@@ -651,37 +666,89 @@ As pipelines das três APIs seguem as mesmas 3 etapas:
 
 1. **Build & Test** — compila o código e roda os testes automáticos (o UsersAPI ganhou um projeto
    de testes unitários nesta fase). Se algum teste falhar, para aqui.
-2. **Imagem** — gera a imagem Docker com uma etiqueta única por execução (o número do build,
-   `BuildId`, para saber exatamente qual versão está no ar), faz uma **varredura de
+2. **Imagem** — gera a imagem Docker com uma etiqueta única por execução (o número da execução,
+   `run_number`, para saber exatamente qual versão está no ar), faz uma **varredura de
    vulnerabilidades** com o **Trivy** (por enquanto só reporta, não bloqueia) e envia a imagem
    para o **ACR**.
-3. **Deploy** — cria/atualiza o Secret do serviço com os valores dos Variable Groups, aplica os
+3. **Deploy** — cria/atualiza o Secret do serviço com os valores dos GitHub Secrets, aplica os
    manifestos e troca a imagem por uma **atualização gradual** (*rolling update*) com
    `maxUnavailable: 0`: as cópias novas sobem antes de as antigas saírem, então o serviço não
    fica fora do ar. Se a nova versão não ficar saudável, a pipeline faz **rollback
    automático** (`kubectl rollout undo`), voltando para a versão anterior.
 
-As pipelines usam uma *service connection* chamada `fcg-azure` e apontam para o grupo de
-recursos `rg-fcg`, o cluster `aks-fcg` e o registro `fcgacr` — nomes que podem ser ajustados nas
-variáveis do topo de cada `azure-pipelines.yml`.
+As pipelines entram no Azure por **OIDC**: em vez de uma senha guardada, o GitHub emite um
+"crachá" temporário para cada execução, e o Azure só aceita crachás de jobs com
+`environment: production` dos 4 repositórios do FCG. Os nomes do grupo de recursos, do cluster
+e do registro vêm das Variables `AKS_RESOURCE_GROUP`, `AKS_CLUSTER_NAME` e `ACR_NAME` de cada
+repositório.
 
-### 9.4. Ordem do primeiro deploy
+### 9.4. Criando a infraestrutura do zero (e o primeiro deploy)
 
-Na primeira vez, com o AKS, o ACR (ligado ao AKS para ele poder baixar as imagens), o Elastic
-Cloud, o CloudAMQP, a *service connection* `fcg-azure` e os três Variable Groups já criados:
+A infraestrutura do Azure também está no código (*infraestrutura como código*): o arquivo
+`infra/main.bicep` descreve o **ACR** e o **AKS** (com o AKS já autorizado a baixar imagens do
+ACR), e dois scripts criam tudo e ligam o GitHub ao Azure. Você precisa ter instalados o `az`
+(Azure CLI, logado com `az login`), o `gh` (GitHub CLI, logado com `gh auth login` na conta
+dona dos repositórios) e o `kubectl`. O Elastic Cloud e o CloudAMQP são criados à parte, nos
+sites deles; aqui você só informa os dados de acesso.
 
-1. **Rode a pipeline da Plataforma** (este repositório) — cria o Secret `kong-config`, sobe o
-   Kong (que já ganha o IP público do Azure Load Balancer) e o monitoramento.
-2. **Rode as pipelines dos serviços** — UsersAPI, CatalogAPI e PaymentsAPI (em qualquer ordem
-   entre si). Cada uma cria o seu Secret e sobe o seu serviço e os bancos dele. Enquanto
-   `users-api` e `catalog-api` não existirem, o Kong não tem para onde encaminhar as chamadas;
-   assim que os serviços sobem, as rotas passam a funcionar. (Se algo parecer travado, rodar a
-   pipeline da Plataforma de novo reinicia o Kong.)
-3. **Pegue o IP público** com `kubectl get service kong-proxy` (coluna `EXTERNAL-IP`) e teste
-   como na seção 6 ("Testando o API Gateway"), trocando `localhost` por esse IP — por exemplo,
-   `http://<EXTERNAL-IP>/api/v1/games/search?q=zelda`.
+1. **Preencha o `infra/.env`.** Copie o modelo e coloque os valores reais (nome do ACR, dados do
+   CloudAMQP, do Elastic Cloud, senhas dos bancos e a chave JWT). Esse arquivo é ignorado pelo Git:
+
+   ```bash
+   cp infra/.env.example infra/.env
+   ```
+
+2. **Crie o ACR e o AKS** (a primeira vez leva de 5 a 10 minutos; pode rodar de novo sem
+   problema):
+
+   ```bash
+   ./scripts/provision-azure.sh
+   ```
+
+3. **Ligue o GitHub ao Azure.** O script cria o login OIDC, dá à pipeline só as permissões
+   necessárias (enviar imagens ao ACR e conectar no AKS) e grava os GitHub Secrets e Variables
+   dos 4 repositórios a partir do `infra/.env`. Ele também cria o environment `production` de
+   cada repositório com uma **regra de branches**: só jobs das branches `main` e `tech_fase_4`
+   podem usar esse environment (e, com ele, o login no Azure). Pode rodar de novo: as branches
+   que já estão na regra são mantidas.
+
+   ```bash
+   ./scripts/setup-github-oidc.sh
+   ```
+
+4. **Rode o workflow da Plataforma** (este repositório). Ele cria o Secret `kong-config`, sobe
+   o Kong (que já ganha o IP público do Azure Load Balancer) e o monitoramento.
+   - **Antes do merge:** o deploy de teste roda com um `git push` na `tech_fase_4`. O primeiro
+     push com o arquivo `.github/workflows/deploy-platform.yml` já dispara; depois, só quando
+     mudam `k8s/kong/`, `k8s/monitoring/`, `scripts/deploy-platform.sh` ou o próprio workflow.
+   - **Depois do merge:** roda com push na `main` ou manualmente, em **Actions** →
+     **Deploy da plataforma** → **Run workflow**. O GitHub só mostra o botão **Run workflow**
+     depois que o arquivo do workflow existe na `main`.
+5. **Rode os workflows das 3 APIs** — UsersAPI, CatalogAPI e PaymentsAPI (em qualquer ordem
+   entre si), do mesmo jeito: antes do merge, com push na `tech_fase_4` de cada repositório;
+   depois do merge, com push na `main` ou em **Actions** → **CI/CD ...** → **Run workflow**.
+   Cada um cria o seu Secret e sobe o seu serviço e os bancos dele. Enquanto `users-api` e `catalog-api` não
+   existirem, o Kong não tem para onde encaminhar as chamadas; assim que os serviços sobem, as
+   rotas passam a funcionar. (Se algo parecer travado, rodar o workflow da Plataforma de novo
+   reinicia o Kong.)
+6. **Pegue o IP público** e teste como na seção 6 ("Testando o API Gateway"), trocando
+   `localhost` por esse IP — por exemplo, `http://<EXTERNAL-IP>/api/v1/games/search?q=zelda`:
+
+   ```bash
+   az aks get-credentials -g rg-fcg -n aks-fcg   # troque se usou outros nomes no infra/.env
+   kubectl get service kong-proxy   # coluna EXTERNAL-IP
+   ```
 
 Depois disso, cada `git push` na `main` de um repositório atualiza só aquele serviço.
+
+> **Custo:** o AKS cobra por hora enquanto existir, mesmo parado. Quando terminar de usar,
+> apague tudo de uma vez (o ACR, o AKS e o que estiver dentro do grupo de recursos):
+>
+> ```bash
+> az group delete -n rg-fcg
+> ```
+>
+> Para recriar, basta repetir os passos 2 a 5.
 
 ---
 
@@ -690,7 +757,8 @@ Depois disso, cada `git push` na `main` de um repositório atualiza só aquele s
 - **Senhas antigas continuam no histórico do Git.** Os arquivos com a chave JWT e senhas foram
   removidos e substituídos por modelos, mas versões antigas deles ainda podem ser vistas no
   histórico de commits. Por isso, todas essas credenciais devem ser consideradas vazadas e
-  **trocadas** (novas chaves/senhas nos Variable Groups e no `.env`).
+  **trocadas** (novas chaves/senhas no `infra/.env`, regravadas nos GitHub Secrets pelo
+  `scripts/setup-github-oidc.sh`, e no `.env`).
 - **Os bancos de dados rodam como Pods dentro do AKS**, não como serviços gerenciados do Azure
   (Azure SQL, Cosmos DB, Azure Cache for Redis). Os dados ficam em volumes persistentes, mas
   backup, alta disponibilidade e atualização dos bancos não são automáticos — cada banco tem uma
@@ -699,8 +767,18 @@ Depois disso, cada `git push` na `main` de um repositório atualiza só aquele s
 - **A varredura de vulnerabilidades (Trivy) só reporta**, não bloqueia a pipeline (está com
   `--exit-code 0`; dá para trocar para `1` quando a equipe quiser barrar imagens com falhas
   graves).
-- **A ligação com o Azure Key Vault não está no código**: as pipelines leem dos Variable Groups;
-  ligar esses grupos ao Key Vault é uma configuração opcional, feita na tela do Azure DevOps.
+- **As senhas ficam nos GitHub Secrets, não no Azure Key Vault** (o cofre oficial do Azure). Os
+  GitHub Secrets são criptografados e nunca aparecem nos logs, mas ficam por repositório: a
+  mesma senha (por exemplo, a do CloudAMQP) é copiada em mais de um repositório, e trocá-la
+  significa rodar o `scripts/setup-github-oidc.sh` de novo. Ler as senhas direto do Key Vault
+  seria uma evolução possível.
+- **A branch `tech_fase_4` também faz deploy, de forma provisória.** Os 4 workflows disparam com
+  push na `main` e na `tech_fase_4`, e o environment `production` aceita as duas branches (regra
+  criada pelo `scripts/setup-github-oidc.sh`). Isso permite testar o deploy antes do merge. Depois
+  do merge na `main`, remova a `tech_fase_4` dos workflows e da regra do environment (em
+  **Settings > Environments > production**).
+- **O `infra/main.bicep` cria só o ACR e o AKS.** O CloudAMQP e o Elastic Cloud são criados à
+  parte, nos sites deles, e o AKS usa um único grupo de máquinas (2 nós), sem escalar sozinho.
 - O `NotificationsAPI` (Azure Function) não expõe endpoint HTTP de healthcheck — não se aplica a
   uma função serverless; sua saúde é observada via Application Insights, no próprio Azure.
 - A stack de observabilidade (Prometheus/Grafana) cobre CatalogAPI e UsersAPI; PaymentsAPI ainda

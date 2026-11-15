@@ -1,6 +1,6 @@
 # Configuração declarativa do Kong (modo DB-less). Este arquivo é um TEMPLATE:
 # ${JWT_SECRET_KEY} é substituído pela chave real na hora do deploy
-# (scripts/deploy-platform.sh ou pipeline azure-pipelines.yml), e o resultado
+# (scripts/deploy-platform.sh ou workflow .github/workflows/deploy-platform.yml), e o resultado
 # vira o Secret "kong-config" dentro do cluster. A chave nunca fica no Git.
 _format_version: "3.0"
 

@@ -4,8 +4,8 @@
 #
 # Uso:  JWT_SECRET_KEY='<chave>' ./scripts/deploy-platform.sh
 #
-# A pipeline (azure-pipelines.yml) roda este mesmo script no AKS, com a chave
-# vinda do Variable Group do Azure DevOps — a chave nunca é gravada no Git.
+# O workflow (.github/workflows/deploy-platform.yml) roda este mesmo script no AKS,
+# com a chave vinda dos GitHub Secrets — a chave nunca é gravada no Git.
 set -euo pipefail
 
 : "${JWT_SECRET_KEY:?Defina a variável JWT_SECRET_KEY (mesma chave do UsersAPI/CatalogAPI)}"
