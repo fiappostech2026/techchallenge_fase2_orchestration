@@ -20,10 +20,10 @@ chamados de **microsserviços**, que conversam entre si trocando mensagens.
 | Microsserviço | O que faz | Repositório |
 |---|---|---|
 | **API Gateway (Kong)** | Porta única de entrada: recebe as requisições externas, valida o token JWT e roteia para UsersAPI/CatalogAPI | [`k8s/kong`](./k8s/kong) (deste repositório) |
-| **UsersAPI** | Cadastro e login de usuários; emite o token JWT usado pelos outros serviços | [`techchallenge_fase2_user`](../techchallenge_fase2_user) |
-| **CatalogAPI** | Catálogo de jogos, busca de jogos (Elasticsearch, desde a Fase 4), início da compra e biblioteca; valida o token JWT emitido pelo UsersAPI | [`FCG.Catalog`](../FCG.Catalog) |
-| **PaymentsAPI** | Processa (simula) o pagamento de uma compra | [`FCG.Payments`](../FCG.Payments) |
-| **NotificationsAPI** | "Envia" (simula, escrevendo no log) e-mails de boas-vindas e confirmação de compra. Desde a Fase 3, roda como **Azure Function** (serverless), não mais como container 24/7 | [`FCG.Notifications`](../FCG.Notifications) |
+| **UsersAPI** | Cadastro e login de usuários; emite o token JWT usado pelos outros serviços | [`techchallenge_fase2_user`](https://github.com/fiappostech2026/techchallenge_fase2_user) |
+| **CatalogAPI** | Catálogo de jogos, busca de jogos (Elasticsearch, desde a Fase 4), início da compra e biblioteca; valida o token JWT emitido pelo UsersAPI | [`FCG.Catalog`](https://github.com/fiappostech2026/techchallenge_fase2_catalog_service) |
+| **PaymentsAPI** | Processa (simula) o pagamento de uma compra | [`FCG.Payments`](https://github.com/fiappostech2026/techchallenge_fase2_payments_service) |
+| **NotificationsAPI** | "Envia" (simula, escrevendo no log) e-mails de boas-vindas e confirmação de compra. Desde a Fase 3, roda como **Azure Function** (serverless), não mais como container 24/7 | [`FCG.Notifications`](https://github.com/fiappostech2026/techchallenge_fase2_notification_service) |
 
 UsersAPI e CatalogAPI também guardam seus próprios dados em banco (cada um com seu SQL Server
 isolado; o CatalogAPI usa ainda MongoDB, Redis e Elasticsearch); PaymentsAPI não tem banco — é
@@ -530,7 +530,7 @@ como **obrigatória** não têm valor padrão: sem elas o `docker-compose` se re
 ### 8.1. Item 2 — Migração para arquitetura Serverless
 
 O `NotificationsAPI` deixou de rodar como container 24/7 e virou uma **Azure Function**
-(repositório [`FCG.Notifications`](../FCG.Notifications), pasta `FCG.Notifications.Function`),
+(repositório [`FCG.Notifications`](https://github.com/fiappostech2026/techchallenge_fase2_notification_service), pasta `FCG.Notifications.Function`),
 acionada automaticamente por novas mensagens no RabbitMQ via **`RabbitMQTrigger`** nativo do
 Azure Functions para brokers RabbitMQ *self-managed*/externos.
 
@@ -552,7 +552,7 @@ RABBITMQ_PASSWORD=sua-senha-cloudamqp
 ```
 
 Deploy e detalhes da Azure Function (Azure Bicep, `infra/main.bicep`, criação da topologia de
-filas): ver README do [`FCG.Notifications`](../FCG.Notifications).
+filas): ver README do [`FCG.Notifications`](https://github.com/fiappostech2026/techchallenge_fase2_notification_service).
 
 ### 8.2. Item 3 — Stack de Observabilidade (Prometheus + Grafana)
 
@@ -613,7 +613,7 @@ As peças, uma a uma:
 | **Azure Load Balancer** | O "porteiro" com endereço público na internet | Criado sozinho pelo AKS porque o `kong-proxy` é do tipo `LoadBalancer`; tudo que vem de fora entra por ele e cai no Kong |
 | **Elastic Cloud** | Elasticsearch gerenciado (o motor de busca, sem precisar cuidar de servidor) | Atende a busca do CatalogAPI (`GET /api/v1/games/search?q=`), que tolera erros de digitação e ordena por relevância |
 | **CloudAMQP** | RabbitMQ gerenciado (o "correio" entre serviços) | Usado em produção por todos os serviços e pela Azure Function — o RabbitMQ de `k8s/rabbitmq/` fica só para uso local |
-| **MongoDB e Redis** | Banco NoSQL e cache em memória | Já existiam no CatalogAPI (avaliações e cache da listagem); no AKS rodam como Pods |
+| **MongoDB e Redis** | Banco NoSQL e cache em memória | No CatalogAPI: o **MongoDB** (driver oficial `MongoDB.Driver`) guarda as avaliações de jogos, dados flexíveis que não precisam de tabela; o **Redis** (`IDistributedCache`, via `StackExchangeRedis`) guarda o resultado da listagem de jogos com expiração (TTL), evitando ir ao SQL Server a cada chamada. No AKS rodam como Pods. Detalhes no README do CatalogAPI: [NoSQL e cache](https://github.com/fiappostech2026/techchallenge_fase2_catalog_service/blob/main/README.md#8-nosql-mongodb-e-cache-de-persistência-redis) e [busca com Elasticsearch](https://github.com/fiappostech2026/techchallenge_fase2_catalog_service/blob/main/README.md#9-busca-avançada-de-jogos-elasticsearch) |
 | **GitHub Secrets e Variables** | Um "cofre" de senhas (Secrets) e de configurações comuns (Variables) que cada repositório do GitHub tem | Guardam todas as senhas e chaves; as pipelines as entregam ao cluster na hora do deploy |
 | **OIDC** (login sem senha) | O GitHub "apresenta um crachá" temporário a cada execução e o Azure confere de quem é, em vez de usar uma senha guardada | As pipelines entram no Azure só com o crachá do environment `production` do próprio repositório |
 
